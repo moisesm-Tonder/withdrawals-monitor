@@ -10,7 +10,7 @@
 - `LOG_GROUP_NAME`
 - `CLOUDWATCH_FILTER_PATTERN`
 - `SLACK_WEBHOOK_URL`
-- `WINDOW_MINUTES`
+- `WINDOW_MINUTES` (recommended `5`)
 - `ANTHROPIC_API_KEY` (optional)
 - `AWS_ACCESS_KEY_ID`
 - `AWS_SECRET_ACCESS_KEY`
@@ -30,6 +30,9 @@
 - Default: in-process scheduler (`ENABLE_SCHEDULER=true`).
 - Alternative: disable scheduler and trigger `/run` from an external cron.
 
-## Scheduling Options
-- Default: in-process scheduler (`ENABLE_SCHEDULER=true`).
-- Alternative: disable scheduler and trigger `/run` from an external cron.
+## Production Recommendation
+- `WINDOW_MINUTES=5`
+- `ENABLE_SCHEDULER=true`
+- `SCHEDULE_EVERY_MINUTES=5`
+- `RUN_TRIGGER_TOKEN=<random-secret>`
+- Keep `CLOUDWATCH_FILTER_PATTERN="Failed to create disbursement"` so Sherlock anchors on the real STP error line and enriches from related logs in the same Lambda execution.

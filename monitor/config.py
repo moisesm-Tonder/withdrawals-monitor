@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-DEFAULT_WINDOW_MINUTES = 30
+DEFAULT_WINDOW_MINUTES = 5
 DEFAULT_LOG_GROUP_NAME = "usrv-withdrawals-withdrawals"
 DEFAULT_FILTER_PATTERN = '"Failed to create disbursement"'
 DEFAULT_CACHE_FILE = ".incident_cache.json"

@@ -1,8 +1,26 @@
 import json
+import re
 from datetime import datetime, timezone
 from typing import Any
 
+from monitor.types import IncidentContext
 from monitor.utils import nested_get, parse_dt
+
+REQUEST_ID_PATTERNS = (
+    re.compile(r"START RequestId:\s*(?P<value>[0-9a-f-]{36})", re.IGNORECASE),
+    re.compile(r"\[[A-Z]+\]\t[^\t]+\t(?P<value>[0-9a-f-]{36})\t"),
+)
+WITHDRAWAL_ID_PATTERN = re.compile(
+    r"Error processing withdrawal (?P<value>[0-9a-f-]{36})",
+    re.IGNORECASE,
+)
+CLAVE_RASTREO_PATTERN = re.compile(
+    r"['\"]claveRastreo['\"]\s*:\s*['\"](?P<value>[^'\"]+)['\"]"
+)
+DESCRIPCION_ERROR_PATTERN = re.compile(
+    r"['\"]descripcionError['\"]\s*:\s*['\"](?P<value>[^'\"]+)['\"]"
+)
+STP_RESULT_ID_PATTERN = re.compile(r"['\"]id['\"]\s*:\s*(?P<value>-?\d+)")
 
 
 def parse_cloudwatch_message(raw_message: str) -> dict[str, Any]:
@@ -71,3 +89,110 @@ def extract_error_message(doc: dict[str, Any], raw_message: str) -> str:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return raw_message.strip()
+
+
+def extract_incident_context(doc: dict[str, Any], raw_message: str) -> IncidentContext:
+    return IncidentContext(
+        withdrawal_id=_extract_withdrawal_id(doc, raw_message),
+        lambda_request_id=_extract_lambda_request_id(doc, raw_message),
+        clave_rastreo=_extract_clave_rastreo(doc, raw_message),
+        descripcion_error=_extract_descripcion_error(doc, raw_message),
+        stp_result_id=_extract_stp_result_id(doc, raw_message),
+    )
+
+
+def merge_incident_context(
+    primary: IncidentContext, secondary: IncidentContext
+) -> IncidentContext:
+    return IncidentContext(
+        withdrawal_id=primary.withdrawal_id or secondary.withdrawal_id,
+        lambda_request_id=primary.lambda_request_id or secondary.lambda_request_id,
+        clave_rastreo=primary.clave_rastreo or secondary.clave_rastreo,
+        descripcion_error=primary.descripcion_error or secondary.descripcion_error,
+        stp_result_id=primary.stp_result_id or secondary.stp_result_id,
+    )
+
+
+def _extract_string_value(doc: dict[str, Any], candidate_paths: list[list[str]]) -> str:
+    for path in candidate_paths:
+        value = nested_get(doc, path)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return ""
+
+
+def _extract_match(patterns: tuple[re.Pattern[str], ...], raw_message: str) -> str:
+    for pattern in patterns:
+        match = pattern.search(raw_message)
+        if match:
+            return match.group("value").strip()
+    return ""
+
+
+def _extract_single_match(pattern: re.Pattern[str], raw_message: str) -> str:
+    match = pattern.search(raw_message)
+    if not match:
+        return ""
+    return match.group("value").strip()
+
+
+def _extract_lambda_request_id(doc: dict[str, Any], raw_message: str) -> str:
+    candidate_paths = [
+        ["requestId"],
+        ["request_id"],
+        ["aws_request_id"],
+        ["lambda_request_id"],
+        ["context", "aws_request_id"],
+    ]
+    return _extract_string_value(doc, candidate_paths) or _extract_match(
+        REQUEST_ID_PATTERNS, raw_message
+    )
+
+
+def _extract_withdrawal_id(doc: dict[str, Any], raw_message: str) -> str:
+    candidate_paths = [
+        ["withdrawal_id"],
+        ["withdrawalId"],
+        ["action", "withdrawal_id"],
+        ["action", "withdrawalId"],
+    ]
+    return _extract_string_value(doc, candidate_paths) or _extract_single_match(
+        WITHDRAWAL_ID_PATTERN, raw_message
+    )
+
+
+def _extract_clave_rastreo(doc: dict[str, Any], raw_message: str) -> str:
+    candidate_paths = [
+        ["claveRastreo"],
+        ["data", "claveRastreo"],
+        ["request", "data", "claveRastreo"],
+        ["action", "request", "data", "claveRastreo"],
+    ]
+    return _extract_string_value(doc, candidate_paths) or _extract_single_match(
+        CLAVE_RASTREO_PATTERN, raw_message
+    )
+
+
+def _extract_descripcion_error(doc: dict[str, Any], raw_message: str) -> str:
+    candidate_paths = [
+        ["resultado", "descripcionError"],
+        ["error", "descripcionError"],
+        ["action", "error", "descripcionError"],
+    ]
+    return _extract_string_value(doc, candidate_paths) or _extract_single_match(
+        DESCRIPCION_ERROR_PATTERN, raw_message
+    )
+
+
+def _extract_stp_result_id(doc: dict[str, Any], raw_message: str) -> str:
+    candidate_paths = [
+        ["resultado", "id"],
+        ["error", "id"],
+        ["action", "error", "id"],
+    ]
+    return _extract_string_value(doc, candidate_paths) or _extract_single_match(
+        STP_RESULT_ID_PATTERN, raw_message
+    )

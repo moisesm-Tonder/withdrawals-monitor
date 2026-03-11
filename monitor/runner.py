@@ -10,18 +10,64 @@ from botocore.exceptions import BotoCoreError, ClientError
 from monitor.analysis import generate_analysis_with_claude, generate_fallback_analysis
 from monitor.cache import cleanup_cache, load_cache, save_cache
 from monitor.classification import classify_error
-from monitor.cloudwatch_client import fetch_candidate_events
+from monitor.cloudwatch_client import (
+    fetch_candidate_events,
+    fetch_related_execution_events,
+)
 from monitor.config import load_config, load_dotenv_file
 from monitor.logging_setup import configure_runtime
 from monitor.parsing import (
     extract_error_message,
+    extract_incident_context,
     extract_timestamp,
     is_fail_event,
+    merge_incident_context,
     parse_cloudwatch_message,
 )
 from monitor.slack_notifier import send_slack_alert
-from monitor.types import ErrorRule
+from monitor.types import ErrorRule, IncidentContext
 from monitor.utils import build_incident_hash, floor_window_start
+
+
+def enrich_incident_context(
+    logs_client: Any,
+    log_group_name: str,
+    event: dict[str, Any],
+    doc: dict[str, Any],
+    raw_message: str,
+) -> IncidentContext:
+    context = extract_incident_context(doc, raw_message)
+    log_stream_name = str(event.get("logStreamName", "")).strip()
+    anchor_timestamp_ms = event.get("timestamp")
+    if not log_stream_name or anchor_timestamp_ms is None or not context.lambda_request_id:
+        return context
+
+    try:
+        related_events = fetch_related_execution_events(
+            logs_client=logs_client,
+            log_group_name=log_group_name,
+            log_stream_name=log_stream_name,
+            anchor_timestamp_ms=int(anchor_timestamp_ms),
+            lambda_request_id=context.lambda_request_id,
+        )
+    except (BotoCoreError, ClientError) as exc:
+        logging.warning(
+            "No se pudo enriquecer contexto para request_id=%s: %s",
+            context.lambda_request_id,
+            exc,
+        )
+        return context
+
+    for related_event in related_events:
+        related_message = str(related_event.get("message", ""))
+        related_doc = parse_cloudwatch_message(related_message)
+        context = merge_incident_context(
+            context, extract_incident_context(related_doc, related_message)
+        )
+        if context.score() == 5:
+            break
+
+    return context
 
 
 def run_monitor() -> None:
@@ -52,7 +98,12 @@ def run_monitor() -> None:
     logging.info("Eventos candidatos leidos: %d", len(raw_events))
 
     buckets: dict[str, dict[str, Any]] = defaultdict(
-        lambda: {"rule": None, "count": 0, "sample_message": ""}
+        lambda: {
+            "rule": None,
+            "count": 0,
+            "sample_message": "",
+            "sample_context": IncidentContext(),
+        }
     )
     processed = 0
 
@@ -77,6 +128,13 @@ def run_monitor() -> None:
         bucket["count"] += 1
         if not bucket["sample_message"]:
             bucket["sample_message"] = message
+            bucket["sample_context"] = enrich_incident_context(
+                logs_client=logs_client,
+                log_group_name=config.log_group_name,
+                event=event,
+                doc=doc,
+                raw_message=raw_message,
+            )
 
     logging.info("Eventos analizados en ventana: %d", processed)
 
@@ -119,6 +177,7 @@ def run_monitor() -> None:
             occurrences=count,
             window_minutes=config.window_minutes,
             analysis=analysis,
+            incident_context=payload["sample_context"],
         )
         cache[item_hash] = {
             "error_type": error_type,

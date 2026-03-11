@@ -11,10 +11,12 @@ def generate_analysis_with_claude(
     sample_message: str,
 ) -> str:
     prompt = (
-        "Eres un analista SRE. Devuelve respuesta breve en espanol y con 3 lineas:\n"
-        "1) Causa probable:\n"
-        "2) Impacto potencial:\n"
-        "3) Accion sugerida:\n\n"
+        "Eres un analista SRE. Devuelve respuesta breve en espanol con exactamente 3 lineas.\n"
+        "No uses numeracion, vinetas ni markdown.\n"
+        "Usa exactamente este formato:\n"
+        "Causa probable: ...\n"
+        "Impacto potencial: ...\n"
+        "Accion sugerida: ...\n\n"
         f"Error type: {error_type}\n"
         f"Severity: {severity}\n"
         f"Ocurrencias: {occurrences}\n"
