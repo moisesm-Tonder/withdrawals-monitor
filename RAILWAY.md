@@ -29,3 +29,7 @@
 ## Scheduling Options
 - Default: in-process scheduler (`ENABLE_SCHEDULER=true`).
 - Alternative: disable scheduler and trigger `/run` from an external cron.
+
+## Scheduling Options
+- Default: in-process scheduler (`ENABLE_SCHEDULER=true`).
+- Alternative: disable scheduler and trigger `/run` from an external cron.
